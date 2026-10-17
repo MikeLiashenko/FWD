@@ -1,0 +1,8 @@
+node_modules/
+data/
+data-dev/
+.env
+
+# Договори містять телефони й дати народження
+Contract*.pdf
+Contract*.html
