@@ -172,23 +172,32 @@ window.addEventListener('hashchange', render);
 
 function viewSetup() {
   nav.hidden = true;
+  if (!session.setupAllowed) {
+    show(`
+      <div class="brand" style="margin-top:48px">
+        <div class="brand-logo">${coin(44)}</div>
+        <h1>ЗДТ ще не налаштовано</h1>
+        <p>Першу настройку робіть на самому комп’ютері, де працює сервер: відкрийте там <b>http://localhost:3000</b>.</p>
+      </div>`);
+    return;
+  }
   show(`
     <div class="brand" style="margin-top:24px">
       <div class="brand-logo">${coin(44)}</div>
       <h1>Вітаємо в ЗДТ</h1>
-      <p>Перший запуск. Задайте імена й PIN-коди (4–8 цифр).</p>
+      <p>Перший запуск. Задайте імена й PIN-коди (6–8 цифр). Додаток буде доступний з інтернету, тож не беріть дати народження чи 123456.</p>
     </div>
     <form id="setup">
       <div class="card">
         <div class="group-title"><div class="avatar son" style="width:34px;height:34px;font-size:14px">С</div>Син</div>
         <div class="field"><label>Ім'я</label><input name="sonName" placeholder="Ім'я сина" required></div>
         <div class="field"><label>Дата народження</label><input name="sonBirth" type="date" max="${kyivToday()}" required></div>
-        <div class="field"><label>PIN</label><input name="sonPin" type="password" inputmode="numeric" pattern="\\d{4,8}" required></div>
+        <div class="field"><label>PIN</label><input name="sonPin" type="password" inputmode="numeric" pattern="\\d{6,8}" minlength="6" maxlength="8" required></div>
       </div>
       <div class="card">
         <div class="group-title"><div class="avatar parents" style="width:34px;height:34px">${icon('users')}</div>Батьки — спільний акаунт</div>
         <div class="field"><label>Назва</label><input name="parentsName" value="Батьки" required></div>
-        <div class="field"><label>PIN</label><input name="parentsPin" type="password" inputmode="numeric" pattern="\\d{4,8}" required></div>
+        <div class="field"><label>PIN</label><input name="parentsPin" type="password" inputmode="numeric" pattern="\\d{6,8}" minlength="6" maxlength="8" required></div>
       </div>
       <p class="muted small center">PIN знає лише той, чий це акаунт.</p>
       <button class="block">Почати ${icon('arrow')}</button>

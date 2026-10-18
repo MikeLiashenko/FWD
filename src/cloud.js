@@ -154,6 +154,7 @@ export async function initCloud() {
     try {
       await connect();
       await pushChanges();
+      await publishPendingLink();
       setInterval(pushChanges, PUSH_EVERY_MS);
       return true;
     } catch (err) {
@@ -167,6 +168,28 @@ export async function initCloud() {
   const retry = setInterval(async () => {
     if (await tryConnect()) clearInterval(retry);
   }, 60_000);
+}
+
+// Поточна адреса тунелю лежить у /zdt_link — це єдине місце, яке правила дозволяють читати всім.
+// Сторінка на GitHub Pages читає її й перекидає туди.
+let linkToPublish = null;
+
+async function publishPendingLink() {
+  if (!status.connected || !linkToPublish) return;
+  const url = linkToPublish;
+  try {
+    await root.parent.child(`${ROOT}_link`).set({ url, updated: new Date().toISOString() });
+    if (linkToPublish === url) linkToPublish = null;
+    console.log('Хмара: нову адресу записано для сторінки на GitHub.');
+  } catch (err) {
+    status.lastError = err.message;
+    console.error('Хмара: не вдалося записати адресу —', err.message);
+  }
+}
+
+export function publishLink(url) {
+  linkToPublish = url;
+  return publishPendingLink();
 }
 
 // Для тестів: зупинити з'єднання, щоб процес міг завершитися

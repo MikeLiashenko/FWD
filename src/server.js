@@ -4,7 +4,7 @@ import os from 'node:os';
 import { existsSync } from 'node:fs';
 import { UPLOAD_DIR, getSetting, setSetting, PUBLIC_SETTINGS, db, transaction } from './db.js';
 import {
-  hasUsers, createUsers, listUsers, login, isValidPin,
+  hasUsers, createUsers, listUsers, login, isValidPin, clientIp, isLocalRequest,
   setSessionCookie, clearSessionCookie, currentUser, requireUser, requireRole,
 } from './auth.js';
 import {
@@ -13,7 +13,8 @@ import {
 } from './tasks.js';
 import { addEntry, balance, toUah, history } from './ledger.js';
 import { aiEnabled, aiProvider } from './ai.js';
-import { initCloud, cloudStatus, cloudEnabled } from './cloud.js';
+import { initCloud, cloudStatus, cloudEnabled, publishLink } from './cloud.js';
+import { startTunnel, tunnelStatus } from './tunnel.js';
 import { addGrade, reviewGrade, listGrades, gradesForReview, recentSubjects, tickGrades } from './grades.js';
 import {
   createComplaint, proposeResolution, answerResolution, listComplaints, finesSummary,
@@ -29,6 +30,17 @@ import {
 } from './meeting.js';
 
 const app = express();
+// Cloudflare Tunnel працює на цьому ж комп'ютері: довіряємо його заголовкам (https) лише з localhost
+app.set('trust proxy', 'loopback');
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+  });
+  next();
+});
 app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.resolve('public')));
 
@@ -47,14 +59,29 @@ function tick() {
 app.use('/api', (req, res, next) => { tick(); next(); });
 setInterval(tick, 60_000);
 
+// Сторінка на GitHub Pages перевіряє, чи відповідає ноутбук, перш ніж перекинути туди
+app.get('/api/ping', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.json({ ok: true });
+});
+
 // ---------- Перший запуск і вхід ----------
 
 app.get('/api/session', (req, res) => {
-  res.json({ setupNeeded: !hasUsers(), user: currentUser(req), users: listUsers() });
+  res.json({
+    setupNeeded: !hasUsers(),
+    setupAllowed: isLocalRequest(req),
+    user: currentUser(req),
+    users: listUsers(),
+  });
 });
 
 app.post('/api/setup', (req, res) => {
   if (hasUsers()) return res.status(400).json({ error: 'Сім\'я вже налаштована' });
+  // Інакше будь-хто з посиланням міг би «налаштувати сім'ю» першим
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ error: 'Першу настройку можна зробити лише на самому комп\'ютері: http://localhost:3000' });
+  }
   // Інакше нова порожня сім'я могла б перезаписати дані, що лежать у хмарі
   if (cloudEnabled && !cloudStatus().connected) {
     return res.status(503).json({ error: 'Немає зв\'язку з Firebase. Перевірте інтернет і перезапустіть сервер.' });
@@ -62,7 +89,7 @@ app.post('/api/setup', (req, res) => {
   const { son, parents } = req.body ?? {};
   for (const p of [son, parents]) {
     if (!p?.name?.trim()) return res.status(400).json({ error: 'Вкажи імена' });
-    if (!isValidPin(p.pin)) return res.status(400).json({ error: 'PIN — від 4 до 8 цифр' });
+    if (!isValidPin(p.pin)) return res.status(400).json({ error: 'PIN — від 6 до 8 цифр' });
   }
   const birth = son.birthDate;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(birth ?? '') || birth >= new Date().toISOString().slice(0, 10)) {
@@ -75,9 +102,9 @@ app.post('/api/setup', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   const { userId, pin } = req.body ?? {};
-  const result = login(Number(userId), String(pin ?? ''));
+  const result = login(Number(userId), String(pin ?? ''), { ip: clientIp(req), local: isLocalRequest(req) });
   if (result.error) return res.status(401).json({ error: result.error });
-  setSessionCookie(res, result.user.id);
+  setSessionCookie(req, res, result.user.id);
   res.json({ user: result.user });
 });
 
@@ -322,7 +349,7 @@ app.post('/api/contract/answer', requireUser, (req, res) => {
 // ---------- Хмара (Firebase) ----------
 
 app.get('/api/cloud', requireUser, (req, res) => {
-  res.json(cloudStatus());
+  res.json({ ...cloudStatus(), tunnel: tunnelStatus(), publicUrl: process.env.ZDT_PUBLIC_URL || null });
 });
 
 // ---------- Налаштування (змінюються на сімейних зборах) ----------
@@ -378,7 +405,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
       }
     }
   }
-  if (!tailscale) console.log('  Tailscale не підключено — поза домом додаток недоступний.');
+  if (process.env.ZDT_PUBLIC_URL) console.log(`  посилання для телефонів звідусіль: ${process.env.ZDT_PUBLIC_URL}`);
+  else if (!tailscale) console.log('  Tailscale не підключено — поза домом додаток недоступний.');
+  startTunnel(PORT, publishLink);
   console.log(aiEnabled
     ? `Завдання генерує ШІ (${aiProvider === 'gemini' ? 'Google Gemini' : 'Claude'}).`
     : 'Ключа ШІ немає — завдання беруться з вбудованого банку.');

@@ -17,8 +17,22 @@ function checkPin(pin, stored) {
   return timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
 }
 
+// Новий PIN — від 6 цифр (додаток доступний з інтернету). Для входу приймаємо й старі 4-значні.
 export function isValidPin(pin) {
-  return typeof pin === 'string' && /^\d{4,8}$/.test(pin);
+  return typeof pin === 'string' && /^\d{6,8}$/.test(pin);
+}
+
+const looksLikePin = pin => typeof pin === 'string' && /^\d{4,8}$/.test(pin);
+
+// Хто звертається. Через Cloudflare Tunnel запит приходить з localhost, але з заголовком
+// CF-Connecting-IP, який Cloudflare додає завжди. Тому «локальний» = без цього заголовка й з 127.0.0.1.
+export function clientIp(req) {
+  return req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '?';
+}
+
+export function isLocalRequest(req) {
+  const remote = req.socket.remoteAddress || '';
+  return !req.headers['cf-connecting-ip'] && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote);
 }
 
 export function hasUsers() {
@@ -35,20 +49,49 @@ export function listUsers() {
   return db.prepare('SELECT id, role, name FROM users ORDER BY id').all();
 }
 
-// Захист від підбору PIN: після 5 помилок вхід блокується на хвилину.
-const failures = new Map();
+// Захист від підбору PIN:
+// - акаунт: 5 помилок поспіль → блокування на 15 хвилин;
+// - адреса: 10 помилок за годину → блокування цієї адреси на годину;
+// - усього: 40 помилок за годину з інтернету → вхід ззовні вимикається на годину (з ноутбука працює).
+const MINUTE = 60_000;
+const byAccount = new Map(); // userId → { count, until }
+const byIp = new Map();      // ip → [час помилки, ...]
+let remoteFails = [];        // час помилок з інтернету
+let remoteLockedUntil = 0;
 
-export function login(userId, pin) {
-  const f = failures.get(userId);
-  if (f && f.count >= 5 && Date.now() - f.last < 60_000) {
-    return { error: 'Забагато спроб. Зачекай хвилину.' };
+const recent = (times, ms) => times.filter(t => Date.now() - t < ms);
+
+function lockMessage(until) {
+  const minutes = Math.max(1, Math.ceil((until - Date.now()) / MINUTE));
+  return `Забагато невдалих спроб. Спробуй через ${minutes} хв.`;
+}
+
+// Блокування стосуються лише входу з інтернету: з самого ноутбука увійти можна завжди,
+// інакше зловмисник міг би навмисно «замкнути» сім'ю з її ж додатка.
+export function login(userId, pin, { ip = '?', local = false } = {}) {
+  const now = Date.now();
+  const ipFails = recent(byIp.get(ip) ?? [], 60 * MINUTE);
+  const acc = byAccount.get(userId);
+  if (!local) {
+    if (remoteLockedUntil > now) return { error: lockMessage(remoteLockedUntil) };
+    if (ipFails.length >= 10) return { error: lockMessage(ipFails[0] + 60 * MINUTE) };
+    if (acc?.until > now) return { error: lockMessage(acc.until) };
   }
+
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user || !isValidPin(pin) || !checkPin(pin, user.pin_hash)) {
-    failures.set(userId, { count: (f?.count ?? 0) + 1, last: Date.now() });
-    return { error: 'Неправильний PIN' };
+  if (!user || !looksLikePin(pin) || !checkPin(pin, user.pin_hash)) {
+    if (local) return { error: 'Неправильний PIN' };
+    const count = (acc?.count ?? 0) + 1;
+    byAccount.set(userId, { count: count >= 5 ? 0 : count, until: count >= 5 ? now + 15 * MINUTE : 0 });
+    byIp.set(ip, [...ipFails, now]);
+    remoteFails = [...recent(remoteFails, 60 * MINUTE), now];
+    if (remoteFails.length >= 40) {
+      remoteLockedUntil = now + 60 * MINUTE;
+      console.warn('Увага: забагато невдалих спроб входу з інтернету — вхід ззовні вимкнено на годину.');
+    }
+    return { error: count >= 5 ? lockMessage(now + 15 * MINUTE) : 'Неправильний PIN' };
   }
-  failures.delete(userId);
+  if (!local) byAccount.delete(userId);
   return { user: { id: user.id, role: user.role, name: user.name } };
 }
 
@@ -56,11 +99,14 @@ function sign(payload) {
   return createHmac('sha256', getSetting('session_secret')).update(payload).digest('base64url');
 }
 
-export function setSessionCookie(res, userId) {
+export function setSessionCookie(req, res, userId) {
   const expires = Date.now() + SESSION_DAYS * 86_400_000;
   const payload = `${userId}.${expires}`;
   res.cookie(COOKIE, `${payload}.${sign(payload)}`, {
-    httpOnly: true, sameSite: 'lax', maxAge: SESSION_DAYS * 86_400_000,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure, // через Cloudflare (https) cookie не піде відкритим каналом
+    maxAge: SESSION_DAYS * 86_400_000,
   });
 }
 
