@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { db, getNumber, getSetting, transaction, UPLOAD_DIR } from './db.js';
+import { db, getNumber, getSetting, transaction, UPLOAD_DIR, queueUpload } from './db.js';
 import { today, isPastDeadline, nowIso, ageOn } from './time.js';
 import { aiEnabled, generateWithAI } from './ai.js';
 import { pickFromBank } from './taskBank.js';
@@ -119,6 +119,7 @@ function saveProofImage(taskId, dataUrl) {
   if (buf.length > 5 * 1024 * 1024) throw new TaskError('Фото завелике (максимум 5 МБ)');
   const file = `task-${taskId}-${Date.now()}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`;
   writeFileSync(path.join(UPLOAD_DIR, file), buf);
+  queueUpload(file);
   return file;
 }
 

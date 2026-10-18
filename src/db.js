@@ -164,6 +164,26 @@ CREATE TABLE IF NOT EXISTS payouts (
 );
 `);
 
+// Синхронізація з Firebase: кожна зміна в цих таблицях потрапляє в чергу sync_queue,
+// а src/cloud.js відправляє її у Firestore. Значення — первинний ключ таблиці.
+export const SYNC_TABLES = {
+  users: 'id', settings: 'key', tasks: 'id', ledger: 'id', grades: 'id', awards: 'key',
+  complaints: 'id', fines: 'id', pauses: 'id', payouts: 'id', shop_items: 'id', purchases: 'id', topics: 'id',
+};
+
+db.exec('CREATE TABLE IF NOT EXISTS sync_queue (id INTEGER PRIMARY KEY, tbl TEXT NOT NULL, pk TEXT NOT NULL)');
+for (const [t, pk] of Object.entries(SYNC_TABLES)) {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS sync_${t}_i AFTER INSERT ON ${t} BEGIN INSERT INTO sync_queue (tbl, pk) VALUES ('${t}', NEW.${pk}); END;
+    CREATE TRIGGER IF NOT EXISTS sync_${t}_u AFTER UPDATE ON ${t} BEGIN INSERT INTO sync_queue (tbl, pk) VALUES ('${t}', NEW.${pk}); END;
+    CREATE TRIGGER IF NOT EXISTS sync_${t}_d AFTER DELETE ON ${t} BEGIN INSERT INTO sync_queue (tbl, pk) VALUES ('${t}', OLD.${pk}); END;
+  `);
+}
+
+export function queueUpload(file) {
+  db.prepare("INSERT INTO sync_queue (tbl, pk) VALUES ('uploads', ?)").run(file);
+}
+
 // Значення за замовчуванням. Змінюються на сімейних зборах (п. 12.2).
 const DEFAULTS = {
   rate_blisks: '25',      // п. 2.1: 25 блісків = 10 грн

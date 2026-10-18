@@ -1280,8 +1280,28 @@ const SETTING_GROUPS = [
   ] },
 ];
 
+function cloudCard(c) {
+  let pill;
+  let text;
+  if (!c.enabled) {
+    pill = '<span class="pill wait">Лише на комп’ютері</span>';
+    text = 'Дані зберігаються тільки на цьому комп’ютері. Щоб мати копію в Firebase, покладіть файл firebase-key.json у папку програми й перезапустіть сервер.';
+  } else if (!c.connected || c.lastError) {
+    pill = `<span class="pill bad">${icon('x')}Немає зв’язку</span>`;
+    text = `Не вдалося з’єднатися з Firebase${c.lastError ? `: ${esc(c.lastError)}` : ''}. Зміни збережено на комп’ютері й відправляться, щойно зв’язок з’явиться.`;
+  } else {
+    pill = `<span class="pill ok">${icon('check')}${c.pending ? `У черзі: ${c.pending}` : 'Усе збережено'}</span>`;
+    text = `Проєкт <b>${esc(c.project)}</b>. Остання синхронізація: ${c.lastSync ? fmtDate(c.lastSync) : '—'}.${c.restored ? ' Базу відновлено з хмари.' : ''}`;
+  }
+  return `
+    <div class="card">
+      <div class="row spread"><div class="group-title" style="margin:0">${icon('file')}Хмара Firebase</div>${pill}</div>
+      <p class="muted small" style="margin-top:10px">${text}</p>
+    </div>`;
+}
+
 async function viewSettings() {
-  const settings = await api('/settings');
+  const [settings, cloud] = await Promise.all([api('/settings'), api('/cloud')]);
   const parents = !isSon();
   const field = ([key, label, suffix]) => `
     <div class="field"><label>${label}</label>
@@ -1294,6 +1314,7 @@ async function viewSettings() {
     ${backLink}
     <h1>Налаштування</h1>
     <p class="lead">Змінюються на сімейних зборах у неділю (п. 12.2).${parents ? '' : ' Редагувати можуть лише батьки.'}</p>
+    ${cloudCard(cloud)}
     <form id="settings">
       ${SETTING_GROUPS.map(g => `
         <div class="card">

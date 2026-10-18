@@ -13,6 +13,7 @@ import {
 } from './tasks.js';
 import { addEntry, balance, toUah, history } from './ledger.js';
 import { aiEnabled, aiProvider } from './ai.js';
+import { initCloud, cloudStatus, cloudEnabled } from './cloud.js';
 import { addGrade, reviewGrade, listGrades, gradesForReview, recentSubjects, tickGrades } from './grades.js';
 import {
   createComplaint, proposeResolution, answerResolution, listComplaints, finesSummary,
@@ -54,6 +55,10 @@ app.get('/api/session', (req, res) => {
 
 app.post('/api/setup', (req, res) => {
   if (hasUsers()) return res.status(400).json({ error: 'Сім\'я вже налаштована' });
+  // Інакше нова порожня сім'я могла б перезаписати дані, що лежать у хмарі
+  if (cloudEnabled && !cloudStatus().connected) {
+    return res.status(503).json({ error: 'Немає зв\'язку з Firebase. Перевірте інтернет і перезапустіть сервер.' });
+  }
   const { son, parents } = req.body ?? {};
   for (const p of [son, parents]) {
     if (!p?.name?.trim()) return res.status(400).json({ error: 'Вкажи імена' });
@@ -314,6 +319,12 @@ app.post('/api/contract/answer', requireUser, (req, res) => {
   res.json(answerRenewal(req.user.role, Boolean(req.body?.agree)));
 });
 
+// ---------- Хмара (Firebase) ----------
+
+app.get('/api/cloud', requireUser, (req, res) => {
+  res.json(cloudStatus());
+});
+
 // ---------- Налаштування (змінюються на сімейних зборах) ----------
 
 app.get('/api/settings', requireUser, (req, res) => {
@@ -348,6 +359,8 @@ app.use((err, req, res, next) => {
 
 // Tailscale видає адреси з діапазону 100.64.0.0/10
 const isTailscale = ip => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
+
+await initCloud();
 
 const PORT = Number(process.env.PORT) || 3000;
 const server = app.listen(PORT, '0.0.0.0', () => {

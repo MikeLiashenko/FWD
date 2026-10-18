@@ -3,6 +3,10 @@ data/
 data-dev/
 .env
 
+# Ключ доступу до Firebase — нікому не показувати
+firebase-key.json
+*firebase-adminsdk*.json
+
 # Договори містять телефони й дати народження
 Contract*.pdf
 Contract*.html
