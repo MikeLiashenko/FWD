@@ -346,17 +346,37 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Щось пішло не так. Спробуй ще раз.' });
 });
 
+// Tailscale видає адреси з діапазону 100.64.0.0/10
+const isTailscale = ip => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
+
 const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`ЗДТ працює: http://localhost:${PORT}`);
-  for (const addrs of Object.values(os.networkInterfaces())) {
+  let tailscale = false;
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    if (/vEthernet|VirtualBox|VMware|Loopback/i.test(name)) continue; // віртуальні мережі Windows
     for (const a of addrs ?? []) {
-      if (a.family === 'IPv4' && !a.internal) console.log(`  з телефону в тій самій Wi-Fi: http://${a.address}:${PORT}`);
+      if (a.family !== 'IPv4' || a.internal) continue;
+      if (isTailscale(a.address)) {
+        tailscale = true;
+        console.log(`  звідусіль через Tailscale: http://${os.hostname().toLowerCase()}:${PORT}  (або http://${a.address}:${PORT})`);
+      } else {
+        console.log(`  з телефону в домашній Wi-Fi: http://${a.address}:${PORT}`);
+      }
     }
   }
+  if (!tailscale) console.log('  Tailscale не підключено — поза домом додаток недоступний.');
   console.log(aiEnabled
     ? `Завдання генерує ШІ (${aiProvider === 'gemini' ? 'Google Gemini' : 'Claude'}).`
     : 'Ключа ШІ немає — завдання беруться з вбудованого банку.');
+});
+
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`ЗДТ уже працює (порт ${PORT} зайнятий) — мабуть, його запустив автозапуск. Це вікно можна закрити.`);
+    process.exit(0);
+  }
+  throw err;
 });
 
 process.on('SIGINT', () => { db.close(); process.exit(0); });
