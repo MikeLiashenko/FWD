@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ApiError } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 
 // Хто придумує завдання: Gemini (ключ Google), Claude (ключ Anthropic) або ніхто.
@@ -49,17 +49,36 @@ function userPrompt({ difficulty, age, recentTitles }) {
   return `Вік: ${age ? `${age} років` : 'школяр 10–13 років'}.\nСкладність: ${DIFFICULTY_TEXT[difficulty]}.\n\nНедавні завдання:\n${recent}\n\nПридумай одне нове завдання.`;
 }
 
+// Якщо модель перевантажена (503) чи вичерпано ліміт (429), чекаємо й пробуємо ще раз,
+// потім — запасні моделі. Лише якщо не відповіла жодна, завдання береться з банку.
+const GEMINI_FALLBACKS = [...new Set([GEMINI_MODEL, 'gemini-flash-lite-latest', 'gemini-2.5-flash'])];
+const isBusy = err => err instanceof ApiError && [429, 500, 503].includes(err.status);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function askGemini(prompt) {
-  const response = await gemini.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      systemInstruction: SYSTEM,
-      responseMimeType: 'application/json',
-      responseJsonSchema: SCHEMA,
-    },
-  });
-  return response.text;
+  let lastError;
+  for (const model of GEMINI_FALLBACKS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await gemini.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction: SYSTEM,
+            responseMimeType: 'application/json',
+            responseJsonSchema: SCHEMA,
+          },
+        });
+        return response.text;
+      } catch (err) {
+        if (!isBusy(err)) throw err;
+        lastError = err;
+        console.warn(`Gemini ${model} перевантажена (${err.status}), спроба ${attempt + 1}`);
+        if (attempt === 0) await sleep(1500);
+      }
+    }
+  }
+  throw lastError;
 }
 
 async function askClaude(prompt) {

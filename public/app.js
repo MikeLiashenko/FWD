@@ -319,6 +319,7 @@ function taskCard(t, actions = '') {
       <p class="task-desc">${esc(t.description)}</p>
       <div class="task-meta">
         <span class="pill ${statusClass}">${icon(statusIcon)}${statusText}${t.auto_approved ? ' · авто' : ''}</span>
+        ${t.source === 'bank' ? `<span class="pill" title="ШІ не відповів — завдання з запасного банку">${icon('book')}З банку</span>` : ''}
       </div>
       ${t.proof_note ? `<div class="quote">${icon('message')}<div><b>Звіт</b>${esc(t.proof_note)}</div></div>` : ''}
       ${t.proof_image ? `<img class="proof-img" src="/api/proof/${encodeURIComponent(t.proof_image)}" alt="Фото-доказ">` : ''}
