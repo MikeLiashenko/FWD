@@ -29,6 +29,13 @@ const status = {
 };
 
 let root = null; // посилання на /zdt; створюється один раз
+
+export class HostedElsewhereError extends Error {
+  constructor(url) {
+    super(`Сервер ЗДТ тепер працює на Render${url ? ` (${url})` : ''}. Запуск на цьому комп'ютері вимкнено, щоб не зіпсувати дані.`);
+    this.url = url;
+  }
+}
 const pendingCount = () => db.prepare('SELECT COUNT(*) AS n FROM sync_queue').get().n;
 
 // У ключах Realtime Database не можна використовувати . $ # [ ] /
@@ -141,6 +148,16 @@ async function connect() {
     root = getDatabase(initializeApp({ credential: cert(key), databaseURL: DATABASE_URL })).ref(ROOT);
   }
 
+  // Сервер має працювати лише в одному місці. Render позначає себе в /zdt_host;
+  // сервер на ноутбуці, побачивши цю позначку, не запускається, щоб не перезаписувати дані.
+  const hostRef = root.parent.child(`${ROOT}_host`);
+  if (process.env.RENDER) {
+    await hostRef.set({ host: 'render', url: process.env.RENDER_EXTERNAL_URL ?? null, since: new Date().toISOString() });
+  } else if (!process.env.ZDT_ALLOW_LOCAL) {
+    const host = (await hostRef.get()).val();
+    if (host?.host === 'render') throw new HostedElsewhereError(host.url);
+  }
+
   const cloudHasData = (await root.child('users').limitToFirst(1).get()).exists();
   const localHasData = db.prepare('SELECT COUNT(*) AS n FROM users').get().n > 0;
   if (cloudHasData && !localHasData) await restore();
@@ -164,6 +181,7 @@ export async function initCloud() {
       setInterval(pushChanges, PUSH_EVERY_MS);
       return true;
     } catch (err) {
+      if (err instanceof HostedElsewhereError) throw err;
       status.connected = false;
       status.lastError = err.message;
       console.error('Хмара: не вдалося підключитися до Firebase —', err.message);

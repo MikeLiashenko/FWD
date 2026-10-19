@@ -13,7 +13,7 @@ import {
 } from './tasks.js';
 import { addEntry, balance, toUah, history } from './ledger.js';
 import { aiEnabled, aiProvider } from './ai.js';
-import { initCloud, cloudStatus, cloudEnabled, publishLink, flushCloud } from './cloud.js';
+import { initCloud, cloudStatus, cloudEnabled, publishLink, flushCloud, HostedElsewhereError } from './cloud.js';
 import { startTunnel, tunnelStatus } from './tunnel.js';
 import { addGrade, reviewGrade, listGrades, gradesForReview, recentSubjects, tickGrades } from './grades.js';
 import {
@@ -388,7 +388,14 @@ app.use((err, req, res, next) => {
 // Tailscale видає адреси з діапазону 100.64.0.0/10
 const isTailscale = ip => /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
 
-await initCloud();
+try {
+  await initCloud();
+} catch (err) {
+  if (!(err instanceof HostedElsewhereError)) throw err;
+  console.log(err.message);
+  if (err.url) console.log(`Відкривайте: ${process.env.ZDT_PUBLIC_URL || err.url}`);
+  process.exit(0);
+}
 
 const PORT = Number(process.env.PORT) || 3000;
 const server = app.listen(PORT, '0.0.0.0', () => {
