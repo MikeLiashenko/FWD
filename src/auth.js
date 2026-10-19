@@ -26,8 +26,9 @@ const looksLikePin = pin => typeof pin === 'string' && /^\d{4,8}$/.test(pin);
 
 // Хто звертається. Через Cloudflare Tunnel запит приходить з localhost, але з заголовком
 // CF-Connecting-IP, який Cloudflare додає завжди. Тому «локальний» = без цього заголовка й з 127.0.0.1.
+// На хостингу перед сервером стоїть проксі, тоді справжню адресу дає req.ip (див. trust proxy)
 export function clientIp(req) {
-  return req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '?';
+  return req.headers['cf-connecting-ip'] || req.ip || req.socket.remoteAddress || '?';
 }
 
 export function isLocalRequest(req) {

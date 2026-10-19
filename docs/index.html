@@ -56,7 +56,12 @@
       } catch {
         return show('<p>Немає інтернету або Firebase недоступний.</p><button onclick="location.reload()">Спробувати ще раз</button>');
       }
-      if (!link?.url || !/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(link.url)) return asleep(link);
+      if (!link?.url || !/^https:\/\/[a-z0-9-]+\.(trycloudflare\.com|onrender\.com)$/.test(link.url)) return asleep(link);
+      // Безкоштовний сервер на Render «засинає» і прокидається до хвилини — просто переходимо туди
+      if (link.url.endsWith('.onrender.com')) {
+        show('<p>Відкриваю… Якщо сервер спав, це може зайняти до хвилини.</p><div class="spinner"></div>');
+        return location.replace(link.url);
+      }
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 6000);

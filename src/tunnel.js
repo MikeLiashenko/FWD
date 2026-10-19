@@ -61,9 +61,7 @@ export function startTunnel(port, onUrl) {
     });
   };
 
+  // Сервер сам завершує процес (див. shutdown у server.js); тут лише прибираємо тунель
   process.on('exit', () => child?.kill());
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) {
-    process.on(signal, () => { child?.kill(); process.exit(0); });
-  }
   run();
 }

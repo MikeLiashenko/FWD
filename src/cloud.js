@@ -11,7 +11,13 @@ const ROOT = process.env.ZDT_CLOUD_PREFIX || 'zdt'; // інший розділ �
 const PUSH_EVERY_MS = 5_000;
 const MAX_PHOTO_BYTES = 5_000_000;
 
-export const cloudEnabled = existsSync(KEY_PATH);
+// На хостингу (Render) ключ лежить не у файлі, а в змінній середовища FIREBASE_KEY_JSON
+const KEY_FROM_ENV = process.env.FIREBASE_KEY_JSON;
+export const cloudEnabled = Boolean(KEY_FROM_ENV) || existsSync(KEY_PATH);
+
+function readKey() {
+  return JSON.parse(KEY_FROM_ENV || readFileSync(KEY_PATH, 'utf8'));
+}
 
 const status = {
   enabled: cloudEnabled,
@@ -126,11 +132,11 @@ async function pushChanges() {
 }
 
 async function connect() {
-  if (!DATABASE_URL) throw new Error('у файлі .env немає FIREBASE_DATABASE_URL');
+  if (!DATABASE_URL) throw new Error('не задано FIREBASE_DATABASE_URL (у .env або в налаштуваннях хостингу)');
   if (!root) {
     const { initializeApp, cert } = await import('firebase-admin/app');
     const { getDatabase } = await import('firebase-admin/database');
-    const key = JSON.parse(readFileSync(KEY_PATH, 'utf8'));
+    const key = readKey();
     status.project = key.project_id;
     root = getDatabase(initializeApp({ credential: cert(key), databaseURL: DATABASE_URL })).ref(ROOT);
   }
@@ -147,7 +153,7 @@ async function connect() {
 // а підключення повторюватиметься щохвилини.
 export async function initCloud() {
   if (!cloudEnabled) {
-    console.log('Хмара: файлу firebase-key.json немає — дані зберігаються лише на цьому комп\'ютері.');
+    console.log('Хмара: немає ключа Firebase (firebase-key.json або FIREBASE_KEY_JSON) — дані зберігаються лише тут.');
     return;
   }
   const tryConnect = async () => {
@@ -190,6 +196,15 @@ async function publishPendingLink() {
 export function publishLink(url) {
   linkToPublish = url;
   return publishPendingLink();
+}
+
+// Перед вимкненням сервера (хостинг «засинає» або оновлюється) відправляємо все, що лишилося в черзі
+export async function flushCloud() {
+  if (!status.connected) return;
+  for (let i = 0; i < 20 && (pushing || pendingCount() > 0); i++) {
+    await pushChanges();
+    if (pushing) await new Promise(r => setTimeout(r, 250));
+  }
 }
 
 // Для тестів: зупинити з'єднання, щоб процес міг завершитися

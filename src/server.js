@@ -13,7 +13,7 @@ import {
 } from './tasks.js';
 import { addEntry, balance, toUah, history } from './ledger.js';
 import { aiEnabled, aiProvider } from './ai.js';
-import { initCloud, cloudStatus, cloudEnabled, publishLink } from './cloud.js';
+import { initCloud, cloudStatus, cloudEnabled, publishLink, flushCloud } from './cloud.js';
 import { startTunnel, tunnelStatus } from './tunnel.js';
 import { addGrade, reviewGrade, listGrades, gradesForReview, recentSubjects, tickGrades } from './grades.js';
 import {
@@ -30,8 +30,9 @@ import {
 } from './meeting.js';
 
 const app = express();
-// Cloudflare Tunnel працює на цьому ж комп'ютері: довіряємо його заголовкам (https) лише з localhost
-app.set('trust proxy', 'loopback');
+// Cloudflare Tunnel працює на цьому ж комп'ютері: довіряємо його заголовкам (https) лише з localhost.
+// На хостингу (Render) перед сервером один проксі — ZDT_TRUST_PROXY=1.
+app.set('trust proxy', process.env.ZDT_TRUST_PROXY ? Number(process.env.ZDT_TRUST_PROXY) : 'loopback');
 app.disable('x-powered-by');
 app.use((req, res, next) => {
   res.set({
@@ -408,6 +409,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   if (process.env.ZDT_PUBLIC_URL) console.log(`  посилання для телефонів звідусіль: ${process.env.ZDT_PUBLIC_URL}`);
   else if (!tailscale) console.log('  Tailscale не підключено — поза домом додаток недоступний.');
   startTunnel(PORT, publishLink);
+  // Render сам дає постійну адресу — записуємо її для сторінки на GitHub Pages
+  if (process.env.RENDER_EXTERNAL_URL) {
+    console.log(`  адреса на Render: ${process.env.RENDER_EXTERNAL_URL}`);
+    publishLink(process.env.RENDER_EXTERNAL_URL);
+  }
   console.log(aiEnabled
     ? `Завдання генерує ШІ (${aiProvider === 'gemini' ? 'Google Gemini' : 'Claude'}).`
     : 'Ключа ШІ немає — завдання беруться з вбудованого банку.');
@@ -421,4 +427,16 @@ server.on('error', err => {
   throw err;
 });
 
-process.on('SIGINT', () => { db.close(); process.exit(0); });
+// Хостинг вимикає сервер сигналом SIGTERM (коли «засинає» чи оновлюється): спершу відправляємо
+// в хмару все, що ще не встигло піти, і лише тоді виходимо
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Отримано ${signal}: зберігаю зміни в хмару й зупиняюся…`);
+  server.close();
+  try { await flushCloud(); } catch { /* усе, що можна, вже відправлено */ }
+  db.close();
+  process.exit(0);
+}
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP']) process.on(signal, () => shutdown(signal));
